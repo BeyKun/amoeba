@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" type="text/css" href="https://code.highcharts.com/css/stocktools/gui.css">
+    <link rel="stylesheet" type="text/css" href="https://code.highcharts.com/css/annotations/popup.css">
+    <script src="https://code.highcharts.com/stock/highstock.js"></script>
+    <script src="https://code.highcharts.com/stock/modules/exporting.js"></script>
+    <script src="https://code.highcharts.com/stock/indicators/indicators-all.js"></script>
+    <script src="https://code.highcharts.com/stock/modules/accessibility.js"></script>
+    <script src="https://code.highcharts.com/modules/drag-panes.js"></script>
+    <script src="https://code.highcharts.com/modules/annotations-advanced.js"></script>
+    <script src="https://code.highcharts.com/modules/price-indicator.js"></script>
+    <script src="https://code.highcharts.com/modules/full-screen.js"></script>
+    <script src="https://code.highcharts.com/modules/stock-tools.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/technicalindicators@3.1.0/dist/browser.es6.min.js"></script>
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous">
+    </script>
+    <title>Amoeba</title>
+</head>
+
+<body>
+    <div class="container-fluid">
+        <div>
+            <div id="container"></div>
+            <div class="text-center">
+                <p> Data Updated in <span id="countdowntimer">30 </span> Seconds</p>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-6">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">Card title</h5>
+                        <p class="card-text">Some quick example text to build on the card title and make up the bulk of
+                            the card's content.</p>
+                        <a href="#" class="btn btn-primary">Go somewhere</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6">
+            </div>
+        </div>
+    </div>
+</body>
+
+<script>
+    const symbol = 'BTCUSDT';
+    const interval = '15m';
+    const limit = 1000;
+    const EMAlegnth = 100;
+    let chart;
+    let initialize = true;
+
+    async function fetchData(symbol, interval) {
+        const response = await fetch(`https://www.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
+        const data = await response.json();
+        return data.map(e => ({
+            time: e[0],
+            open: parseFloat(e[1]),
+            high: parseFloat(e[2]),
+            low: parseFloat(e[3]),
+            close: parseFloat(e[4]),
+            volume: parseFloat(e[5])
+        }));
+    }
+
+
+    function calculateEMA(data, n, smoothingFactor) {
+        const emaArray = [data[0].close];
+        for (let i = 1; i < data.length; i++) {
+            const ema = (data[i].close * smoothingFactor) + (emaArray[i - 1] * (1 - smoothingFactor));
+            emaArray.push(parseFloat(ema.toFixed(2)));
+        }
+        return emaArray;
+    }
+
+    function countDown() {
+        var timeleft = 60;
+        var downloadTimer = setInterval(function(){
+            timeleft--;
+            document.getElementById("countdowntimer").textContent = timeleft;
+            if(timeleft <= 0)
+                clearInterval(downloadTimer);
+        },1000);
+    }
+
+    function drawLine() {
+        const series = chart.series[0]
+        const lastPoint = series.points[series.points.length - 1];
+        const x = lastPoint.plotX + chart.plotLeft;
+        const y = lastPoint.plotY + chart.plotTop;
+        const d = ['M', x, y, 'L', chart.plotWidth + chart.plotLeft, y, ];
+				
+        if (chart.myLine) {
+          chart.myLine.destroy()
+        }
+
+        chart.myLine = chart.renderer.path(d)
+          .attr({
+            'stroke-width': 2,
+            stroke: 'red'
+          })
+          .add()
+          .toFront();
+
+    }
+
+    function backtest(priceData, ema) {
+        const removeArray = (priceData.length-ema.length);
+        priceData.splice(0, removeArray);
+        console.log(priceData);
+        let inPosition = false;
+        const positions = [];
+
+        let tp = 0;
+        let sl = 0;
+
+        const dataEMA = [];
+        const dataPosition = [];
+        for(let i = 0;  i < priceData.length; i++) {
+            if (i < 3)
+                continue;
+
+            const price = priceData[i].close;
+            const currEMA = ema[i];
+            const prevCandle = priceData[i-1];
+            const prev2Candle = priceData[i-2];
+            const prev3Candle = priceData[i-3];
+            const prevGreenCandle = prevCandle.close > prevCandle.open;
+            const prev2RedCandle = prev2Candle.close < prev2Candle.open;
+            const prev3RedCandle = prev3Candle.close < prev3Candle.open;
+            const lastHigherThanEMA = prevCandle.close > currEMA && prevCandle.open > currEMA && prevCandle.high > currEMA && prevCandle.low > currEMA;
+            const bullishEngulfing = prev3Candle.close > prev2Candle.close && prev2Candle.high < prevCandle.close;
+
+            dataEMA.push([priceData[i].time, currEMA]);
+            if(price > currEMA && prevGreenCandle && !inPosition && lastHigherThanEMA && prev2RedCandle && bullishEngulfing && prev3RedCandle) {
+                inPosition = true;
+                sl = prevCandle.low;
+                tp = price * 1.015;
+                positions.push({time: priceData[i].time, price: price, positon: 'OPEN'})
+                dataPosition.push({
+                    x: priceData[i].time,
+                    title: 'Open Position'
+                });
+            } else if (inPosition && (priceData[i].high > tp || priceData[i].low < sl)) { 
+                inPosition = false;
+                const condition = priceData[i].high > tp ? 'PROFIT' : 'LOSS';
+                dataPosition.push({
+                    x: priceData[i].time,
+                    title: condition,
+                    fillColor: condition === 'PROFIT' ? 'green' : 'red',
+                    style: {
+                        color: 'white'
+                    }
+                });
+                positions.push({time: priceData[i].time, price: price, positon:condition})
+            }
+        }
+
+        console.log(positions);
+        chart.series[1].setData(dataPosition, true);
+        chart.series[2].setData(dataEMA, true);
+    }
+
+
+    async function main() {
+        const priceData = await fetchData(symbol, interval);
+        // const ema = calculateEMA(priceData, 50, 2);
+        const ema2 = EMA.calculate({period: EMAlegnth, values: priceData.map(e => e.close)})
+
+        chart = new Highcharts.stockChart('container', {
+            rangeSelector: {
+                selected: 2
+            },
+
+            chart: {
+                height: '720px',
+            },
+
+            title: {
+                text: 'Bitcoin - USDT Price'
+            },
+
+            legend: {
+                enabled: true
+            },
+
+            plotOptions: {
+                series: {
+                    showInLegend: true
+                },
+                candlestick: {
+                    color: 'pink',
+                    lineColor: 'red',
+                    upColor: 'lightgreen',
+                    upLineColor: 'green',
+                }
+            },
+            series: [{
+                type: 'candlestick',
+                id: 'BTCUSDT',
+                name: 'Bitcoin - USDT',
+                data: priceData.map(e => [e.time, e.open, e.high, e.low, e.close]),
+            }, {
+                type: 'flags',
+                name: 'Open Position',
+                data: [],
+                onSeries: 'BTCUSDT',
+                shape: 'squarepin'
+            },
+            {
+                type: 'line',
+                id: 'EMA',
+                name: 'EMA ' + EMAlegnth,
+                data: [],
+            }]
+        });
+        
+        backtest(priceData, ema2);
+        const socket = new WebSocket('wss://stream.binance.com:443/ws/' + symbol.toLowerCase() + '@kline_' +
+            interval);
+        
+        let closed = false;
+        socket.onmessage = function (event) {
+            const data = JSON.parse(event.data);
+            const series = chart.series[0];
+            const shift = series.data.length > 500;
+            if(data.k.x) {
+                console.log('updated');
+                chart.series[0].points[chart.series[0].points.length-1].remove()
+                chart.series[0].addPoint([
+                    data.k.t,
+                    parseFloat(data.k.o),
+                    parseFloat(data.k.h),
+                    parseFloat(data.k.l),
+                    parseFloat(data.k.c),
+                    parseFloat(data.k.v)
+                ], true, shift);
+                closed = true;
+                countDown();
+            } else {
+                if(!closed) {
+                    chart.series[0].points[chart.series[0].points.length-1].remove()
+                } 
+                chart.series[0].addPoint([
+                    data.k.t,
+                    parseFloat(data.k.o),
+                    parseFloat(data.k.h),
+                    parseFloat(data.k.l),
+                    parseFloat(data.k.c),
+                    parseFloat(data.k.v)
+                ], true, shift);
+
+                closed = false;
+            }
+        }
+    }
+
+    main();
+</script>
+
+</html>
